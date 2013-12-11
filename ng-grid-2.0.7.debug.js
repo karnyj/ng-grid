@@ -7,8 +7,6 @@
 (function(window, $) {
 'use strict';
 // the # of rows we want to add to the top and bottom of the rendered grid rows 
-var EXCESS_ROWS = 6;
-var SCROLL_THRESHOLD = 4;
 var ASC = "asc";
 // constant for sorting direction
 var DESC = "desc";
@@ -133,10 +131,10 @@ var ngMoveSelectionHandler = function($scope, elm, evt, grid) {
             r.continueSelection(evt);
             $scope.$emit('ngGridEventDigestGridParent');
 
-            if ($scope.selectionProvider.lastClickedRow.renderedRowIndex >= $scope.renderedRows.length - EXCESS_ROWS - 2) {
+            if ($scope.selectionProvider.lastClickedRow.renderedRowIndex >= $scope.renderedRows.length - 2) {
                 grid.$viewport.scrollTop(grid.$viewport.scrollTop() + $scope.rowHeight);
             }
-            else if ($scope.selectionProvider.lastClickedRow.renderedRowIndex <= EXCESS_ROWS + 2) {
+            else if ($scope.selectionProvider.lastClickedRow.renderedRowIndex <= 2) {
                 grid.$viewport.scrollTop(grid.$viewport.scrollTop() - $scope.rowHeight);
             }
       }
@@ -238,16 +236,19 @@ angular.module('ngGrid.services').factory('$domUtilityService',['$utilityService
         grid.$headers = grid.$headerScroller.children();
         //Viewport
         grid.$viewport = grid.$root.find(".ngViewport");
+        $scope.$viewportScroller = grid.$root.find(".ngViewportScroller");
         //Canvas
         grid.$canvas = grid.$viewport.find(".ngCanvas");
         //Footers
         grid.$footerPanel = grid.$root.find(".ngFooterPanel");
-        
-        $scope.$watch(function () {
-            return grid.$viewport.scrollLeft();
-        }, function (newLeft) {
-            return grid.$headerContainer.scrollLeft(newLeft);
-        });
+
+        if (!grid.config.noLeftScroll) {
+            $scope.$watch(function () {
+                return grid.$viewport.scrollLeft();
+            }, function (newLeft) {
+                return grid.$headerContainer.scrollLeft(newLeft);
+            });
+        }
         domUtilityService.UpdateGridLayout($scope, grid);
     };
     domUtilityService.getRealWidth = function (obj) {
@@ -1401,7 +1402,7 @@ var ngGrid = function ($scope, options, sortService, domUtilityService, $filter,
         i18n: 'en',
         
         //the threshold in rows to force virtualization on
-        virtualizationThreshold: 50
+        virtualizationThreshold: 0
     },
         self = this;
     self.maxCanvasHt = 0;
@@ -1481,15 +1482,15 @@ var ngGrid = function ($scope, options, sortService, domUtilityService, $filter,
         if(self.config.groups.length > 0){
             calculatedHeight = self.rowFactory.parsedData.filter(function(e) {
                 return !e[NG_HIDDEN];
-            }).length * self.config.rowHeight;
+            }).length * self.config.rowHeight + viewportH % self.config.rowHeight;
         } else {
             calculatedHeight = self.filteredRows.length * self.config.rowHeight;
         }
         return calculatedHeight;
     };
     self.elementDims = {
-        scrollW: 0,
-        scrollH: 0,
+        scrollW: domUtilityService.ScrollW,
+        scrollH: domUtilityService.ScrollH,
         rowIndexCellW: 25,
         rowSelectedCellW: 25,
         rootMaxW: 0,
@@ -1518,7 +1519,7 @@ var ngGrid = function ($scope, options, sortService, domUtilityService, $filter,
     };
     self.minRowsToRender = function() {
         var viewportH = $scope.viewportDimHeight() || 1;
-        return Math.floor(viewportH / self.config.rowHeight);
+        return Math.floor(viewportH / self.config.rowHeight) + 1;
     };
     self.refreshDomSizes = function() {
         var dim = new ngDimension();
@@ -2012,21 +2013,24 @@ var ngGrid = function ($scope, options, sortService, domUtilityService, $filter,
         var newRange;
         if (self.filteredRows.length > self.config.virtualizationThreshold) {
             // Have we hit the threshold going down?
-            if (self.prevScrollTop < scrollTop && rowIndex < self.prevScrollIndex + SCROLL_THRESHOLD) {
+            if (self.prevScrollTop < scrollTop && rowIndex < self.prevScrollIndex) {
                 return;
             }
             //Have we hit the threshold going up?
-            if (self.prevScrollTop > scrollTop && rowIndex > self.prevScrollIndex - SCROLL_THRESHOLD) {
+            if (self.prevScrollTop > scrollTop && rowIndex > self.prevScrollIndex) {
                 return;
             }
-            newRange = new ngRange(Math.max(0, rowIndex - EXCESS_ROWS), rowIndex + self.minRowsToRender() + EXCESS_ROWS);
+            newRange = new ngRange(Math.max(0, rowIndex), rowIndex + self.minRowsToRender());
+            self.$viewport.scrollTop(newRange.bottomRow === self.filteredRows.length? self.config.rowHeight*2 : 0)
         } else {
             var maxLen = $scope.configGroups.length > 0 ? self.rowFactory.parsedData.length : self.data.length;
-            newRange = new ngRange(0, Math.max(maxLen, self.minRowsToRender() + EXCESS_ROWS));
+            newRange = new ngRange(0, Math.max(maxLen, self.minRowsToRender()));
+            self.$viewport.scrollTop(newRange.bottomRow === maxLen? self.config.rowHeight*2 : 0)
         }
         self.prevScrollTop = scrollTop;
         self.rowFactory.UpdateViewableRange(newRange);
         self.prevScrollIndex = rowIndex;
+        return true;
     };
 
     //scope funcs
@@ -2049,6 +2053,7 @@ var ngGrid = function ($scope, options, sortService, domUtilityService, $filter,
     $scope.viewportDimHeight = function() {
         return Math.max(0, self.rootDim.outerHeight - $scope.topPanelHeight() - $scope.footerRowHeight - 2);
     };
+
     $scope.groupBy = function (col) {
         if (self.data.length < 1 || !col.groupable  || !col.field) {
             return;
@@ -2237,7 +2242,7 @@ var ngRowFactory = function (grid, $scope, domUtilityService, $templateCache, $u
         rowHeight: grid.config.rowHeight
     };
 
-    self.renderedRange = new ngRange(0, grid.minRowsToRender() + EXCESS_ROWS);
+    self.renderedRange = new ngRange(0, grid.minRowsToRender());
 
     // @entity - the data item
     // @rowIndex - the index of the row
@@ -2830,13 +2835,13 @@ var ngStyleProvider = function($scope, grid) {
         return { "height": col.headerRowHeight + "px" };
     };
     $scope.rowStyle = function (row) {
-        var ret = { "top": row.offsetTop + "px", "height": $scope.rowHeight + "px" };
+        var ret = { "height": $scope.rowHeight + "px" };
         if (row.isAggRow) {
             ret.left = row.offsetLeft;
         }
         return ret;
     };
-    $scope.canvasStyle = function() {
+    $scope.scrollerContentStyle = function() {
         return { "height": grid.maxCanvasHt + "px" };
     };
     $scope.headerScrollerStyle = function() {
@@ -2852,7 +2857,13 @@ var ngStyleProvider = function($scope, grid) {
         return { "width": grid.rootDim.outerWidth + "px", "height": "32px" };
     };
     $scope.viewportStyle = function() {
-        return { "width": grid.rootDim.outerWidth + "px", "height": $scope.viewportDimHeight() + "px" };
+        var vpDimH = $scope.viewportDimHeight();
+        return { "width": (grid.rootDim.outerWidth - (vpDimH < grid.maxCanvasHt? grid.elementDims.scrollW : grid.elementDims.scrollW)) + "px", "height": vpDimH + "px" };
+    };
+
+    $scope.viewportScrollerStyle =  function() {
+        var vpDimH = $scope.viewportDimHeight();
+        return { "width": grid.elementDims.scrollW + "px", "height": (vpDimH - ($scope.viewportHScrollVisible()? grid.elementDims.scrollH : 0)) + "px", display: vpDimH < grid.maxCanvasHt? "block" : "none" };
     };
     $scope.footerStyle = function() {
         return { "width": grid.rootDim.outerWidth + "px", "height": $scope.footerRowHeight + "px" };
@@ -3323,35 +3334,71 @@ ngGridDirectives.directive('ngRow', ['$compile', '$domUtilityService', '$templat
     };
     return ngRow;
 }]);
-ngGridDirectives.directive('ngViewport', [function() {
+
+ngGridDirectives.directive('ngViewportScroller', [function() {
     return function($scope, elm) {
-        var isMouseWheelActive;
-        var prevScollLeft;
-        var prevScollTop = 0;
         elm.bind('scroll', function(evt) {
-            var scrollLeft = evt.target.scrollLeft,
-                scrollTop = evt.target.scrollTop;
-            if ($scope.$headerContainer) {
-                $scope.$headerContainer.scrollLeft(scrollLeft);
+            var scrollTop = evt.target.scrollTop,
+                digestNeeded = false;
+
+            if ($scope.lastScrollTop !== scrollTop) {
+                digestNeeded = !!($scope.adjustScrollTop(scrollTop));
             }
-            $scope.adjustScrollLeft(scrollLeft);
-            $scope.adjustScrollTop(scrollTop);
-            if (!$scope.$root.$$phase) {
+            $scope.lastScrollTop = scrollTop;
+            if (digestNeeded && !$scope.$root.$$phase) {
                 $scope.$digest();
             }
-            prevScollLeft = scrollLeft;
-            prevScollTop = scrollTop;
-            isMouseWheelActive = false;
             return true;
         });
-        elm.bind("mousewheel DOMMouseScroll", function() {
+    };
+}]);
+
+ngGridDirectives.directive('ngViewport', [function() {
+    return function($scope, elm) {
+        var prevScollLeft;
+        var isMouseWheelActive;
+
+        elm.bind('scroll', function(evt) {
+            var scrollLeft = evt.target.scrollLeft,
+                digestNeeded = false;
+
+            if (prevScollLeft !== scrollLeft) {
+                if ($scope.$headerContainer) {
+                    $scope.$headerContainer.scrollLeft(scrollLeft);
+                }
+                $scope.adjustScrollLeft(scrollLeft);
+                digestNeeded = true;
+            }
+
+            prevScollLeft = scrollLeft;
+            if (digestNeeded && !$scope.$root.$$phase) {
+                $scope.$digest();
+            }
+            return true;
+        });
+
+        $(elm).mousedown(function(e) {
+            if (e.which = 2) {
+                e.preventDefault();
+            }
+        });
+
+        $(elm).mousewheel(function(event, delta, deltaX, deltaY) {
             isMouseWheelActive = true;
             if (elm.focus) { elm.focus(); }
+            if (deltaY !== 0) {
+                elm[0].scrollTop = 0;
+                $scope.$viewportScroller[0].scrollTop += (deltaY > 0? -30 : 30)
+            }
             return true;
         });
         if (!$scope.enableCellSelection) {
             $scope.domAccessProvider.selectionHandlers($scope, elm);
         }
+
+        $scope.viewportHScrollVisible = function() {
+            return elm.width() < elm[0].scrollWidth;
+        };
     };
 }]);
 window.ngGrid.i18n['da'] = {
@@ -3552,12 +3599,16 @@ angular.module("ngGrid").run(["$templateCache", function($templateCache) {
     "        <div class=\"ngHeaderScroller\" ng-style=\"headerScrollerStyle()\" ng-include=\"gridId + 'headerRowTemplate.html'\"></div>" +
     "    </div>" +
     "    <div ng-grid-menu></div>" +
-    "</div>" +
-    "<div class=\"ngViewport\" unselectable=\"on\" ng-viewport ng-class=\"{'ui-widget-content': jqueryUITheme}\" ng-style=\"viewportStyle()\">" +
-    "    <div class=\"ngCanvas\" ng-style=\"canvasStyle()\">" +
+     "<div class=\"ngViewport\" unselectable=\"on\" ng-viewport ng-class=\"{'ui-widget-content': jqueryUITheme}\" ng-style=\"viewportStyle()\">" +
+    "    <div class=\"ngCanvas\">" +
     "        <div ng-style=\"rowStyle(row)\" ng-repeat=\"row in renderedRows\" ng-click=\"row.toggleSelected($event)\" ng-class=\"row.alternatingRowClass()\" ng-row></div>" +
     "    </div>" +
     "</div>" +
+
+    "<div class=\"ngViewportScroller\" ng-viewport-scroller ng-style=\"viewportScrollerStyle()\">" +
+    "   <div class=\"ngScrollerContent\"  ng-style=\"scrollerContentStyle()\"></div>" +
+    "</div>" +
+   "</div>" +
     "<div ng-grid-footer></div>" +
     ""
   );
