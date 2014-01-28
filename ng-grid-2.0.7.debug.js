@@ -1270,6 +1270,8 @@ var ngGrid = function ($scope, options, sortService, domUtilityService, $filter,
         //Enable or disable HEAVY column virtualization. This turns off selection checkboxes and column pinning and is designed for spreadsheet-like data.
         enableColumnHeavyVirt: false,
 
+        enableColumnVirt: true,
+
         //Enables the server-side paging feature
         enablePaging: false,
 
@@ -1750,6 +1752,11 @@ var ngGrid = function ($scope, options, sortService, domUtilityService, $filter,
                 }
             });
         }
+
+        // Index causes problems as it triggers the $watch on columnDefs
+        angular.forEach(self.config.columnDefs, function(colDef, i) {
+            delete colDef.index;
+        });
     };
     self.init = function() {
         return self.initTemplates().then(function(){
@@ -1959,6 +1966,10 @@ var ngGrid = function ($scope, options, sortService, domUtilityService, $filter,
     $scope.i18n = {};
     $utils.seti18n($scope, self.config.i18n);
     $scope.adjustScrollLeft = function (scrollLeft) {
+        if (!self.config.enableColumnVirt && scrollLeft !== 0) {
+            return;
+        }
+
         var colwidths = 0,
             totalLeft = 0,
             x = $scope.columns.length,
@@ -1986,6 +1997,8 @@ var ngGrid = function ($scope, options, sortService, domUtilityService, $filter,
                     var newLeft = i > 0 ? (scrollLeft + totalLeft) : scrollLeft;
                     domUtilityService.setColLeft(col, newLeft, self);
                     totalLeft += col.width;
+                } else if (!self.config.enableColumnVirt) {
+                    addCol(col);
                 } else {
                     if (w >= scrollLeft) {
                         if (colwidths <= scrollLeft + self.rootDim.outerWidth) {
@@ -2006,7 +2019,7 @@ var ngGrid = function ($scope, options, sortService, domUtilityService, $filter,
         if (self.prevScrollTop === scrollTop && !force) {
             return;
         }
-        if (scrollTop > 0 && self.$viewport[0].scrollHeight - scrollTop <= self.$viewport.outerHeight()) {
+        if (scrollTop > 0 && $scope.$viewportScroller[0].scrollHeight - scrollTop <= $scope.$viewportScroller.outerHeight()) {
             $scope.$emit('ngGridEventScroll');
         }
         var rowIndex = Math.floor(scrollTop / self.config.rowHeight);
@@ -2021,12 +2034,13 @@ var ngGrid = function ($scope, options, sortService, domUtilityService, $filter,
                 return;
             }
             newRange = new ngRange(Math.max(0, rowIndex), rowIndex + self.minRowsToRender());
-            self.$viewport.scrollTop(newRange.bottomRow === self.filteredRows.length? self.config.rowHeight*2 : 0)
+            self.$viewport.scrollTop(newRange.bottomRow >= self.filteredRows.length? self.config.rowHeight*2 : 0)
         } else {
             var maxLen = $scope.configGroups.length > 0 ? self.rowFactory.parsedData.length : self.data.length;
             newRange = new ngRange(0, Math.max(maxLen, self.minRowsToRender()));
             self.$viewport.scrollTop(newRange.bottomRow === maxLen? self.config.rowHeight*2 : 0)
         }
+
         self.prevScrollTop = scrollTop;
         self.rowFactory.UpdateViewableRange(newRange);
         self.prevScrollIndex = rowIndex;
@@ -3343,7 +3357,10 @@ ngGridDirectives.directive('ngViewportScroller', [function() {
 
             if ($scope.lastScrollTop !== scrollTop) {
                 digestNeeded = !!($scope.adjustScrollTop(scrollTop));
+            } else if ((angular.element(evt.target).height() + evt.target.scrollTop) >= evt.target.scrollHeight) {
+                digestNeeded = !!($scope.adjustScrollTop(scrollTop, true));
             }
+
             $scope.lastScrollTop = scrollTop;
             if (digestNeeded && !$scope.$root.$$phase) {
                 $scope.$digest();
@@ -3388,7 +3405,8 @@ ngGridDirectives.directive('ngViewport', [function() {
             if (elm.focus) { elm.focus(); }
             if (deltaY !== 0) {
                 elm[0].scrollTop = 0;
-                $scope.$viewportScroller[0].scrollTop += (deltaY > 0? -30 : 30)
+                $scope.$viewportScroller[0].scrollTop += (deltaY > 0? -30 : 30);
+                $scope.$viewportScroller.trigger('scroll');
             }
             return true;
         });
